@@ -59,6 +59,15 @@ static unsigned int chunks = 1, prime = 0;
 
 #define SAMPLE_REQ_STR	"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
 
+#define TOKEN_ALPHABET		"!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQ"	\
+				"RSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~"
+#define QETOKEN_ALPHABET	TOKEN_ALPHABET "\"="
+#define OTHER_DELIMETERS	"(),/:;<=>?@[\\]{}"
+#define OBS_TEXT		"\x80\x90\xC8\xAE\xFE\xFF"
+#define VCHAR_ALPHABET		"\x09 \"" OTHER_DELIMETERS 		\
+				TOKEN_ALPHABET OBS_TEXT
+#define ETAG_ALPHABET		OTHER_DELIMETERS TOKEN_ALPHABET OBS_TEXT
+
 static int
 split_and_parse_n(unsigned char *str, int type, size_t len, size_t chunks)
 {
@@ -255,6 +264,60 @@ do {								\
 	while (TRY_PARSE_EXPECT_BLOCK(str, FUZZ_RESP));		\
 } while (0)
 
+#define EXPECT_TFWSTR_EQ(tfw_str, cstr) \
+	EXPECT_EQ(true, tfw_str_eq_cstr(tfw_str, cstr, strlen(cstr), 0))
+
+#define FOR_REQ_SIMPLE(headers)					\
+	FOR_REQ("GET / HTTP/1.1\r\n" headers "\r\n\r\n")
+
+#define FOR_EMPTY_REQ						\
+	FOR_REQ("GET / HTTP/1.1\r\n\r\n")
+
+#define FOR_RESP_SIMPLE(headers)				\
+	FOR_RESP("HTTP/1.1 200 OK\r\n"				\
+		 "Content-Length: 0\r\n" 			\
+		 headers "\r\n\r\n")
+
+#define FOR_EMPTY_RESP 						\
+	FOR_RESP("HTTP/1.1 200 OK\r\n"				\
+		 "Content-Length: 0\r\n\r\n")
+
+#define FOR_REQ_RESP_SIMPLE(headers, lambda)			\
+	FOR_REQ_SIMPLE(headers)					\
+	{							\
+		TfwHttpMsg *msg = (TfwHttpMsg *)req;		\
+		lambda;						\
+	}							\
+	FOR_RESP_SIMPLE(headers)				\
+	{							\
+		TfwHttpMsg *msg = (TfwHttpMsg *)resp;		\
+		lambda;						\
+	}
+
+#define EXPECT_BLOCK_REQ_SIMPLE(headers)			\
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n" headers "\r\n\r\n")
+
+#define EXPECT_BLOCK_RESP_SIMPLE(headers)			\
+	EXPECT_BLOCK_RESP("HTTP/1.1 200 OK\r\n"			\
+			  "Content-Length: 0\r\n"		\
+			  headers "\r\n\r\n")
+
+#define EXPECT_BLOCK_REQ_RESP_SIMPLE(headers)			\
+	EXPECT_BLOCK_REQ_SIMPLE(headers);			\
+	EXPECT_BLOCK_RESP_SIMPLE(headers)
+
+
+#define FOR_REQ_HDR_EQ(header, id)				\
+	FOR_REQ_SIMPLE(header)					\
+	{							\
+		EXPECT_TFWSTR_EQ(&req->h_tbl->tbl[id],	header);\
+	}
+
+#define FOR_RESP_HDR_EQ(header, id)				\
+	FOR_RESP_SIMPLE(header)					\
+	{							\
+		EXPECT_TFWSTR_EQ(&resp->h_tbl->tbl[id], header);\
+	}
 /*
  * Test that the parsed string was split to the right amount of chunks and all
  * the chunks has the same flags.
@@ -335,214 +398,104 @@ TEST(http_parser, leading_eol)
 
 TEST(http_parser, parses_req_method)
 {
-	FOR_REQ("COPY /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_COPY);
+#define TEST_REQ_METHOD(METHOD)					\
+	FOR_REQ(#METHOD " /filename HTTP/1.1\r\n\r\n")		\
+	{							\
+		EXPECT_EQ(req->method, TFW_HTTP_METH_##METHOD);	\
 	}
 
-	FOR_REQ("DELETE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_DELETE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_GET);
-	}
-
-	FOR_REQ("HEAD /? HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_HEAD);
-	}
-
-	FOR_REQ("LOCK /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_LOCK);
-	}
-
-	FOR_REQ("MKCOL /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_MKCOL);
-	}
-
-	FOR_REQ("MOVE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_MOVE);
-	}
-
-	FOR_REQ("OPTIONS /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_OPTIONS);
-	}
-
-	FOR_REQ("PATCH /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_PATCH);
-	}
-
-	FOR_REQ("POST /a?p=1 HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_POST);
-	}
-
-	FOR_REQ("PROPFIND /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_PROPFIND);
-	}
-
-	FOR_REQ("PROPPATCH /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_PROPPATCH);
-	}
-
-	FOR_REQ("PUT /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_PUT);
-	}
-
-	FOR_REQ("TRACE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_TRACE);
-	}
-
-	FOR_REQ("UNLOCK /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_UNLOCK);
-	}
-
+	TEST_REQ_METHOD(COPY);
+	TEST_REQ_METHOD(DELETE);
+	TEST_REQ_METHOD(GET);
+	TEST_REQ_METHOD(HEAD);
+	TEST_REQ_METHOD(LOCK);
+	TEST_REQ_METHOD(MKCOL);
+	TEST_REQ_METHOD(MOVE);
+	TEST_REQ_METHOD(OPTIONS);
+	TEST_REQ_METHOD(PATCH);
+	TEST_REQ_METHOD(POST);
+	TEST_REQ_METHOD(PROPFIND);
+	TEST_REQ_METHOD(PROPPATCH);
+	TEST_REQ_METHOD(PUT);
+	TEST_REQ_METHOD(TRACE);
+	TEST_REQ_METHOD(UNLOCK);
 	/* Supported Non-RFC methods. */
-	FOR_REQ("PURGE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, TFW_HTTP_METH_PURGE);
+	TEST_REQ_METHOD(PURGE);
+
+#define TEST_REQ_UNKNOWN(METHOD)				\
+	FOR_REQ(#METHOD " /filename HTTP/1.1\r\n\r\n")		\
+	{							\
+		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);	\
 	}
 
 	/* RFC methods, not supported by TempestaFW. */
-	FOR_REQ("ACL /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("BASELINE-CONTROL /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("BIND /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("CHECKIN /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("CHECKOUT /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("CONNECT /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("LABEL /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("LINK /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("MERGE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("MKACTIVITY /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("MKCALENDAR /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("MKREDIRECTREF /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("MKWORKSPACE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("ORDERPATCH /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("PRI /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("REBIND /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("REPORT /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("SEARCH /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("UNBIND /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("UNCHECKOUT /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("UNLINK /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("UPDATE /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("UPDATEREDIRECTREF /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-	FOR_REQ("VERSION-CONTROL /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-
+	TEST_REQ_UNKNOWN(ACL);
+	TEST_REQ_UNKNOWN(BASELINE-CONTROL);
+	TEST_REQ_UNKNOWN(BIND);
+	TEST_REQ_UNKNOWN(CHECKIN);
+	TEST_REQ_UNKNOWN(CHECKOUT);
+	TEST_REQ_UNKNOWN(CONNECT);
+	TEST_REQ_UNKNOWN(LABEL);
+	TEST_REQ_UNKNOWN(LINK);
+	TEST_REQ_UNKNOWN(MERGE);
+	TEST_REQ_UNKNOWN(MKACTIVITY);
+	TEST_REQ_UNKNOWN(MKCALENDAR);
+	TEST_REQ_UNKNOWN(MKREDIRECTREF);
+	TEST_REQ_UNKNOWN(MKWORKSPACE);
+	TEST_REQ_UNKNOWN(ORDERPATCH);
+	TEST_REQ_UNKNOWN(PRI);
+	TEST_REQ_UNKNOWN(REBIND);
+	TEST_REQ_UNKNOWN(REPORT);
+	TEST_REQ_UNKNOWN(SEARCH);
+	TEST_REQ_UNKNOWN(UNBIND);
+	TEST_REQ_UNKNOWN(UNCHECKOUT);
+	TEST_REQ_UNKNOWN(UNLINK);
+	TEST_REQ_UNKNOWN(UPDATE);
+	TEST_REQ_UNKNOWN(UPDATEREDIRECTREF);
+	TEST_REQ_UNKNOWN(VERSION-CONTROL);
 	/* Unknown methods. */
-	FOR_REQ("UNKNOWN /filename HTTP/1.1\r\n\r\n") {
-		EXPECT_EQ(req->method, _TFW_HTTP_METH_UNKNOWN);
-	}
-}
+	TEST_REQ_UNKNOWN(UNKNOWN);
 
-#define EXPECT_TFWSTR_EQ(tfw_str, cstr) \
-	EXPECT_EQ(true, tfw_str_eq_cstr(tfw_str, cstr, strlen(cstr), 0))
+#undef TEST_REQ_UNKNOWN
+#undef TEST_REQ_METHOD
+}
 
 TEST(http_parser, parses_req_uri)
 {
-	/* Relative part of the URI only. */
-
-	FOR_REQ("GET / HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/");
+#define TEST_URI_PATH(req_uri_path)					\
+	FOR_REQ("GET " req_uri_path " HTTP/1.1\r\n\r\n")		\
+	{								\
+		EXPECT_TFWSTR_EQ(&req->host, "");			\
+		EXPECT_TFWSTR_EQ(&req->uri_path, req_uri_path);		\
 	}
 
-	FOR_REQ("GET /? HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/?");
-	}
+	TEST_URI_PATH("/");
+	TEST_URI_PATH("/?");
+	TEST_URI_PATH("/foo/b_a_r/baz.html");
+	TEST_URI_PATH("/a/b/c/dir/");
+	TEST_URI_PATH("/a/b/c/dir/?foo=1&bar=2#abcd");
 
-	FOR_REQ("GET /foo/b_a_r/baz.html HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/foo/b_a_r/baz.html");
-	}
-
-	FOR_REQ("GET /a/b/c/dir/ HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/a/b/c/dir/");
-	}
-
-	FOR_REQ("GET /a/b/c/dir/?foo=1&bar=2#abcd HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->uri_path,
-				 "/a/b/c/dir/?foo=1&bar=2#abcd");
+#define TEST_FULL_REQ(req_host, req_uri_path)				\
+	FOR_REQ("GET http://" req_host req_uri_path " HTTP/1.1\r\n\r\n")\
+	{								\
+		EXPECT_TFWSTR_EQ(&req->host, req_host);			\
+		EXPECT_TFWSTR_EQ(&req->uri_path, req_uri_path);		\
 	}
 
 	/*
 	 * Absolute URI.
 	 * NOTE: we combine host and port URI parts into one field 'req->host'.
 	 */
-	FOR_REQ("GET http://natsys-lab.com/ HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com");
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/");
-	}
+	TEST_FULL_REQ("natsys-lab.com", "");
+	TEST_FULL_REQ("natsys-lab.com", "/");
+	TEST_FULL_REQ("natsys-lab.com:8080", "");
+	TEST_FULL_REQ("natsys-lab.com:8080", "/");
+	TEST_FULL_REQ("natsys-lab.com", "/foo/");
+	TEST_FULL_REQ("natsys-lab.com:8080", "/cgi-bin/show.pl?entry=tempesta");
 
-	FOR_REQ("GET http://natsys-lab.com HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com");
-		EXPECT_TFWSTR_EQ(&req->uri_path, "");
-	}
-
-	FOR_REQ("GET http://natsys-lab.com:8080/ HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com:8080");
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/");
-	}
-
-	FOR_REQ("GET http://natsys-lab.com:8080 HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com:8080");
-		EXPECT_TFWSTR_EQ(&req->uri_path, "");
-	}
-
-	FOR_REQ("GET http://natsys-lab.com/foo/ HTTP/1.1\r\n\r\n") {
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com");
-		EXPECT_TFWSTR_EQ(&req->uri_path, "/foo/");
-	}
-
-	FOR_REQ("GET http://natsys-lab.com:8080/cgi-bin/show.pl?entry=tempesta"
-		" HTTP/1.1\r\n\r\n")
+	FOR_REQ("GET http://userame@natsys-lab.com HTTP/1.1\r\n\r\n")
 	{
-		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com:8080");
-		EXPECT_TFWSTR_EQ(&req->uri_path,
-				 "/cgi-bin/show.pl?entry=tempesta");
+		EXPECT_TFWSTR_EQ(&req->host, "natsys-lab.com");
 	}
 
 	EXPECT_BLOCK_REQ("GET \x7f HTTP/1.1\r\n"
@@ -552,6 +505,9 @@ TEST(http_parser, parses_req_uri)
 	EXPECT_BLOCK_REQ("GET /\x03uri HTTP/1.1\r\n"
 			 "Host: test\r\n"
 			 "\r\n");
+
+#undef TEST_FULL_REQ
+#undef TEST_URI_PATH
 }
 
 TEST(http_parser, parses_enforce_ext_req)
@@ -689,46 +645,6 @@ TEST(http_parser, mangled_messages)
 			 "Host: test\r\n"
 			 "Connection: close, \"foo\"\r\n"
 			 "\r\n");
-	/*
-	 * "Content-Length:" and "Transfer-Encoding:" header fields
-	 * may not be present together in a request.
-	 */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Content-Length: 4\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "4\r\n"
-			 "12345\r\n"
-			 "0\r\n"
-			 "\r\n");
-	/*
-	 * "chunked" coding must be present in a request if there's
-	 * any other coding (i.e. "Transfer-Encoding" is present).
-	 */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Transfer-Encoding: gzip\r\n"
-			 "\r\n"
-			 "4\r\n"
-			 "12345\r\n");
-
-	/* "chunked" coding must be the last coding. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Transfer-Encoding: chunked, gzip\r\n"
-			 "\r\n"
-			 "4\r\n"
-			 "12345\r\n"
-			 "0\r\n"
-			 "\r\n");
-
-	/* "chunked" coding may not be applied twice. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Transfer-Encoding: gzip, chunked\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "4\r\n"
-			 "12345\r\n"
-			 "0\r\n"
-			 "\r\n");
 
 	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
 			 "Content-Type: foo/aa-\x19np\r\n"
@@ -737,44 +653,6 @@ TEST(http_parser, mangled_messages)
 	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
 			  "Content-Length: 0\r\n"
 			  "X-Foo: t\x7fst\r\n"
-			  "\r\n");
-	/*
-	 * "Content-Length:" and "Transfer-Encoding:" header fields
-	 * may not be present together in a response.
-	 */
-	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
-			  "Content-Length: 7\r\n"
-			  "Server: test server\r\n"
-			  "Transfer-Encoding: chunked\r\n"
-			  "\r\n"
-			  "7\r\n"
-			  "1234567\r\n"
-			  "0\r\n"
-			  "\r\n");
-	/*
-	 * "chunked" coding may be missing in a response, but that
-	 * means "unlimited body" which is tested by other means.
-	 */
-
-	/* "chunked" coding must be the last coding. */
-	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
-			  "Server: test server\r\n"
-			  "Transfer-Encoding: chunked, gzip\r\n"
-			  "\r\n"
-			  "7\r\n"
-			  "1234567\r\n"
-			  "0\r\n"
-			  "\r\n");
-
-	/* "chunked" coding may not be applied twice. */
-	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
-			  "Server: test server\r\n"
-			  "Transfer-Encoding: gzip, chunked\r\n"
-			  "Transfer-Encoding: chunked\r\n"
-			  "\r\n"
-			  "7\r\n"
-			  "1234567\r\n"
-			  "0\r\n"
 			  "\r\n");
 }
 
@@ -905,59 +783,6 @@ TEST(http_parser, casesense)
  */
 TEST(http_parser, hdr_token_confusion)
 {
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Accept: textK/html\r\n"
-		"Connection: closekeep-alive\n"
-		"Pragma: no-cacheX, fooo \r\n"
-		"Cache-Control: max-staleno-cache, no-storeno-store\r\n"
-		"\r\n");
-	{
-		EXPECT_FALSE(test_bit(TFW_HTTP_B_ACCEPT_HTML, req->flags));
-		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
-		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
-		EXPECT_FALSE(req->cache_ctl.flags & (TFW_HTTP_CC_MAX_STALE
-						     | TFW_HTTP_CC_NO_CACHE
-						     | TFW_HTTP_CC_NO_STORE));
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Accept: text/htmlK\r\n"
-		"Connection: keep-aliveA\r\n"
-		"Cache-Control: no-transform\", only-if-cachedd\r\n"
-		"\r\n");
-	{
-		EXPECT_FALSE(test_bit(TFW_HTTP_B_ACCEPT_HTML, req->flags));
-		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
-		EXPECT_FALSE(req->cache_ctl.flags & (TFW_HTTP_CC_NO_TRANSFORM
-						     | TFW_HTTP_CC_OIFCACHED
-						     | TFW_HTTP_CC_NO_STORE));
-
-	}
-
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Content-Length: 0\r\n"
-		 "Cache-Control: privatee, no-cacheO, proxy-revalidateX\r\n"
-		 "\r\n");
-	{
-		EXPECT_FALSE(resp->cache_ctl.flags
-			     & (TFW_HTTP_CC_MAX_STALE | TFW_HTTP_CC_NO_CACHE
-				| TFW_HTTP_CC_NO_STORE | TFW_HTTP_CC_PRIVATE
-				| TFW_HTTP_CC_PROXY_REVAL));
-	}
-
-	EXPECT_BLOCK_RESP("GET / HTTP/1.1\r\n"
-			  "Date: Jana, 23 May 2005 22:38:34 GMT\r\n"
-			  "Content-Length: 0\r\n"
-			  "\r\n");
-
-	/*
-	 * If we have Transfer-Encoding, then we must have 'chunked',
-	 * so the request must be blocked.
-	 */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Transfer-Encoding: chunkedchunked\r\n"
-			 "\r\n");
-
 	/*
 	 * Headers must contain at least single character, otherwise
 	 * message must be blocked.
@@ -1107,13 +932,8 @@ TEST(http_parser, fills_hdr_tbl_for_req)
 		EXPECT_TRUE(tfw_str_eq_cstr(h_auth, s_auth,
 					    strlen(s_auth), 0));
 
-		EXPECT_TRUE(req->method = TFW_HTTP_METH_GET);
 		EXPECT_TRUE(req->content_length == 0);
-		EXPECT_TRUE(req->cache_ctl.flags & TFW_HTTP_CC_NO_STORE);
-		EXPECT_TRUE(req->cache_ctl.flags & TFW_HTTP_CC_MIN_FRESH);
-		EXPECT_TRUE(req->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
-		EXPECT_TRUE(req->cache_ctl.min_fresh == 30);
-		EXPECT_TRUE(req->cache_ctl.max_age == 1);
+		EXPECT_TRUE(req->cache_ctl.flags & TFW_HTTP_CC_HDR_AUTHORIZATION);
 		EXPECT_TRUE(ht->tbl[TFW_HTTP_HDR_HOST].eolen == 2);
 	}
 }
@@ -1225,74 +1045,217 @@ TEST(http_parser, fills_hdr_tbl_for_resp)
 					    strlen(s_date), 0));
 
 		EXPECT_TRUE(resp->status == 200);
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_PRIVATE);
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
-		EXPECT_TRUE(resp->cache_ctl.max_age == 5);
 		EXPECT_TRUE(resp->keep_alive == 600);
-		/*
-		 *  $ date -u --date='@1000000000'
-		 *  Sun Sep  9 01:46:40 UTC 2001
-		 */
-		EXPECT_TRUE(resp->date == 1000000000);
 		EXPECT_TRUE(h_dummy9->eolen == 2);
 	}
 }
 
-TEST(http_parser, cache_control_flags)
+TEST(http_parser, cache_control)
 {
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Content-Length: 0\r\n"
-		 "Connection: Keep-Alive\r\n"
-		 "Content-Type: text/html; charset=iso-8859-1\r\n"
-		 "Cache-Control: max-age=5, private, no-cache, ext=foo\r\n"
-		 "\r\n");
+	FOR_EMPTY_REQ
 	{
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_PRIVATE);
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
-		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
-		EXPECT_FALSE(
-			resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_IS_PRESENT);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_NO_STORE);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_NO_TRANSFORM);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_MAX_STALE);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_MIN_FRESH);
+		EXPECT_FALSE(req->cache_ctl.flags & TFW_HTTP_CC_OIFCACHED);
 	}
 
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Content-Length: 0\r\n"
-		 "Connection: Keep-Alive\r\n"
-		 "Content-Type: text/html; charset=iso-8859-1\r\n"
-		 "Pragma: no-cache\r\n"
-		 "\r\n");
+	FOR_EMPTY_RESP
 	{
-		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PRIVATE);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_IS_PRESENT);
 		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_STORE);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_TRANSFORM);
 		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
-		EXPECT_TRUE(
-			resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
-	}
-
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Content-Length: 0\r\n"
-		 "Connection: Keep-Alive\r\n"
-		 "Content-Type: text/html; charset=iso-8859-1\r\n"
-		 "\r\n");
-	{
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_MUST_REVAL);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PROXY_REVAL);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PUBLIC);
 		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PRIVATE);
-		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
-		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
-		EXPECT_FALSE(
-			resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_S_MAXAGE);
 	}
 
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Content-Length: 0\r\n"
-		 "Connection: Keep-Alive\r\n"
-		 "Pragma: nocache\r\n"
-		 "Content-Type: text/html; charset=iso-8859-1\r\n"
-		 "\r\n");
+	FOR_REQ_RESP_SIMPLE("Cache-Control: nO-caChE, NO-stOre, "
+			    "no-TRansfORm, MAx-age=4", {
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_IS_PRESENT);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_STORE);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_TRANSFORM);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
+		EXPECT_TRUE(msg->cache_ctl.max_age == 4);
+	});
+
+	// Cache Control Extensions, not strict compliance with RFC
+	FOR_REQ_RESP_SIMPLE("Cache-Control: " QETOKEN_ALPHABET ", no-cache, "
+			    QETOKEN_ALPHABET ", no-store, "
+			    "no-transform, max-age=12, " QETOKEN_ALPHABET, {
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_IS_PRESENT);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_STORE);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_NO_TRANSFORM);
+		EXPECT_TRUE(msg->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);
+		EXPECT_TRUE(msg->cache_ctl.max_age == 12);
+	});
+
+#define TEST_NO_ARGUMENT(directive, flag, MSG_UPPER, MSG_LOWER)		\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive)		\
+	{								\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.flags & flag);		\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:1" directive)		\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive directive)	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:no-store" directive)	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "\"")	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=")	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=1")	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=\"")	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=dummy")	\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=\"dummy\"")\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+	}
+
+#define TEST_SECONDS(directive, flag, FIELD, MSG_UPPER, MSG_LOWER)	\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=0")	\
+	{								\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.flags & flag);		\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 0);		\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=0000")	\
+	{								\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.flags & flag);		\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 0);		\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=")	\
+	{								\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.flags & flag);		\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 0);		\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive "=4294967295")\
+	{								\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.flags & flag);		\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 4294967295);	\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:" directive directive"=5")\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 0);		\
+	}								\
+	FOR_##MSG_UPPER##_SIMPLE("Cache-Control:no-store" directive "=5")\
+	{								\
+		EXPECT_FALSE(MSG_LOWER->cache_ctl.flags & flag);	\
+		EXPECT_TRUE(MSG_LOWER->cache_ctl.FIELD == 0);		\
+	}								\
+	EXPECT_BLOCK_##MSG_UPPER##_SIMPLE("Cache-Control:"		\
+					  directive "=dummy");		\
+	EXPECT_BLOCK_##MSG_UPPER##_SIMPLE("Cache-Control:"		\
+					  directive "=\"");		\
+	EXPECT_BLOCK_##MSG_UPPER##_SIMPLE("Cache-Control:"		\
+					  directive "==");
+
+	TEST_NO_ARGUMENT("no-cache", TFW_HTTP_CC_NO_CACHE, REQ, req);
+	TEST_NO_ARGUMENT("no-cache", TFW_HTTP_CC_NO_CACHE, RESP, resp);
+	TEST_NO_ARGUMENT("no-store", TFW_HTTP_CC_NO_STORE, REQ, req);
+	TEST_NO_ARGUMENT("no-store", TFW_HTTP_CC_NO_STORE, RESP, resp);
+	TEST_NO_ARGUMENT("no-transform", TFW_HTTP_CC_NO_TRANSFORM, REQ, req);
+	TEST_NO_ARGUMENT("no-transform", TFW_HTTP_CC_NO_TRANSFORM, RESP, resp);
+	TEST_NO_ARGUMENT("only-if-cached", TFW_HTTP_CC_OIFCACHED, REQ, req);
+	TEST_NO_ARGUMENT("must-revalidate", TFW_HTTP_CC_MUST_REVAL, RESP, resp);
+	TEST_NO_ARGUMENT("proxy-revalidate", TFW_HTTP_CC_PROXY_REVAL, RESP, resp);
+	TEST_NO_ARGUMENT("public", TFW_HTTP_CC_PUBLIC, RESP, resp);
+	TEST_NO_ARGUMENT("private", TFW_HTTP_CC_PRIVATE, RESP, resp);
+
+	TEST_SECONDS("max-age", TFW_HTTP_CC_MAX_AGE, max_age, REQ, req);
+	TEST_SECONDS("max-age", TFW_HTTP_CC_MAX_AGE, max_age, RESP, resp);
+	TEST_SECONDS("max-stale", TFW_HTTP_CC_MAX_STALE, max_stale, REQ, req);
+	TEST_SECONDS("min-fresh", TFW_HTTP_CC_MIN_FRESH, min_fresh, REQ, req);
+	TEST_SECONDS("s-maxage", TFW_HTTP_CC_S_MAXAGE, s_maxage, RESP, resp);
+
+#undef TEST_SECONDS
+#undef TEST_NO_ARGUMENT
+}
+
+TEST(http_parser, age)
+{
+	FOR_RESP_SIMPLE("Age:00000")
+	{
+		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_HDR_AGE);
+		EXPECT_TRUE(resp->cache_ctl.age == 0);
+	}
+
+	FOR_RESP_SIMPLE("Age:\t 0\t \t")
+	{
+		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_HDR_AGE);
+		EXPECT_TRUE(resp->cache_ctl.age == 0);
+	}
+
+	FOR_RESP_SIMPLE("Age: 4294967295")
+	{
+		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_HDR_AGE);
+		EXPECT_TRUE(resp->cache_ctl.age == 4294967295);
+	}
+
+	EXPECT_BLOCK_RESP_SIMPLE("Age: -1");
+	EXPECT_BLOCK_RESP_SIMPLE("Age: 0.999");
+	EXPECT_BLOCK_RESP_SIMPLE("Age: dummy");
+}
+
+TEST(http_parser, pragma)
+{
+#define ONLY_PRAGMA(header)							\
+	FOR_RESP_SIMPLE(header)							\
+	{									\
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PRIVATE);	\
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_NO_CACHE);	\
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_MAX_AGE);	\
+		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);\
+	}
+
+	ONLY_PRAGMA("Pragma: no-cache");
+	ONLY_PRAGMA("Pragma: no-cache, foo");
+	ONLY_PRAGMA("Pragma: no-cache foo");
+	ONLY_PRAGMA("Pragma: no-cache\r\nDummy: foo");
+
+	FOR_RESP_SIMPLE("Pragma: nocache")
 	{
 		/* Contents of "Pragma" is not "no-cache" exactly. */
-		EXPECT_FALSE(
-			resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
 	}
+
+
+	FOR_RESP_SIMPLE("Pragma: no-cacheX, fooo")
+	{
+		EXPECT_FALSE(resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
+	}
+
+#undef ONLY_PRAGMA
 }
 
 TEST(http_parser, suspicious_x_forwarded_for)
@@ -1321,31 +1284,119 @@ TEST(http_parser, suspicious_x_forwarded_for)
 
 TEST(http_parser, parses_connection_value)
 {
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Connection: Keep-Alive\r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("Connection: Keep-Alive")
 	{
 		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
 		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
 		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
 	}
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Connection: Close\r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("Connection: keep-alive")
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	FOR_REQ_SIMPLE("Connection: Close")
 	{
 		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
 		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
 		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
 	}
+
+	FOR_REQ_SIMPLE("Connection: close")
+	{
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	FOR_REQ_SIMPLE("Connection: Dummy")
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	FOR_REQ_SIMPLE("Connection: Close, Dummy")
+	{
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	FOR_REQ_SIMPLE("Connection: Keep-Alive, Dummy")
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	EXPECT_BLOCK_REQ_SIMPLE("Connection: Close, Keep-Alive");
+
+
+	FOR_REQ_SIMPLE("Connection: closekeep-alive")
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
+
+	FOR_REQ_SIMPLE("Connection: keep-alive1")
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_CONN_KA, req->flags));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_EXTRA, req->flags));
+	}
 }
 
 TEST(http_parser, content_length)
 {
+	char buf[256];
+
+	// Content-Length is mandatory for responses
+	EXPECT_BLOCK_RESP("HTTP/1.1 200 OK\r\n\r\n");
+
+	FOR_REQ("GET / HTTP/1.1\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n")
+	{
+		EXPECT_TRUE(req->content_length == 0);
+	}
+
 	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			  "Content-Length: 0\r\n"
-			  "Content-Length: 0\r\n"
-			  "\r\n");
+			 "Content-Length: 5\r\n"
+			 "\r\n");
+
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+		 	  "Content-Length: 5\r\n"
+		 	  "\r\n");
+
+	FOR_RESP("HTTP/1.0 200 OK\r\n"
+		 "Content-Length: 5\r\n"
+		 "\r\n"
+		 "dummy")
+	{
+		EXPECT_TRUE(resp->content_length == 5);
+	}
+
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+			  "Content-Length: 1000\r\n"
+		 	  "\r\n"
+		 	  "dummy");
+
+	sprintf(buf, "HTTP/1.0 200 OK\r\n"
+		"Content-Length: %lu\r\n"
+		"\r\n"
+		"dummy", ~0UL);
+	EXPECT_BLOCK_RESP(buf);
+
+	// sprintf(buf, "HTTP/1.0 200 OK\r\n"
+	// 	"Content-Length: %lu0\r\n" // +1 digit for overflow
+	// 	"\r\n"
+	// 	"dummy", ~0UL);
+	// EXPECT_BLOCK_RESP(buf);
 
 	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
 			 "Content-Length: 10, 10\r\n"
@@ -1353,20 +1404,68 @@ TEST(http_parser, content_length)
 			 "0123456789");
 
 	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
-			  "Content-Length: 0\r\n"
-			  "Content-Length: 0\r\n"
-			  "\r\n");
-
-	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
 			  "Content-Length: 10, 10\r\n"
 			  "\r\n"
 			  "0123456789");
+
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Content-Length: abc\r\n"
+			 "\r\n"
+			 "0123456789");
 
 	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
 			  "Content-Length: -1\r\n"
 			  "\r\n"
 			  "aaaaaa\n"
 			  "\r\n");
+
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Content-Length: 0\r\n"
+		  	 "Content-Length: 0\r\n"
+			 "\r\n");
+
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+			  "Content-Length: 0\r\n"
+			  "Content-Length: 0\r\n"
+			  "\r\n");
+
+	// All 1xx (Informational), 204 (No Content), and 304 (Not Modified)
+	// responses do not include a message body
+	EXPECT_BLOCK_RESP("HTTP/1.1 101 Switching Protocols\r\n"
+			  "Content-Length: 5\r\n"
+			  "\r\n"
+			  "dummy");
+
+	EXPECT_BLOCK_RESP("HTTP/1.1 199 Dummy\r\n"
+			  "Content-Length: 5\r\n"
+			  "\r\n"
+			  "dummy");
+
+	EXPECT_BLOCK_RESP("HTTP/1.0 204 No Content\r\n"
+			  "Content-Length: 5\r\n"
+			  "\r\n"
+			  "dummy");
+
+	FOR_RESP("HTTP/1.0 205 Reset Content\r\n"
+		 "Content-Length: 5\r\n"
+		 "\r\n"
+		 "dummy");
+
+	EXPECT_BLOCK_REQ("HTTP/1.1 304 Not Modified\r\n"
+		 	 "Content-Length: 5\r\n"
+		 	 "\r\n"
+		 	 "dummy");
+
+	FOR_RESP("HTTP/1.1 305 Use Proxy\r\n"
+		 "Content-Length: 5\r\n"
+		 "\r\n"
+		 "dummy");
+
+	// A server MAY send a Content-Length header field in a 304 (Not
+   	// Modified) response to a conditional GET request
+	FOR_RESP("HTTP/1.1 304 Not Modified\r\n"
+		 "Content-Length: 0\r\n"
+		 "\r\n");
 }
 
 TEST(http_parser, eol_crlf)
@@ -1419,56 +1518,6 @@ TEST(http_parser, eol_crlf)
 	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
 			 "Host: g.com\r\r\n"
 			 "\r\r\n");
-}
-
-/*
- * This test ensures that there's not retrogression in handling CRLF.
- * The bug was that in case of trailing headers CRLF that was set to
- * point at location after the headers at the beginning of a message
- * was later reset to point at location after the trailing headers.
- */
-TEST(http_parser, crlf_trailer)
-{
-	unsigned int id;
-	DEFINE_TFW_STR(s_custom, "Custom-Hdr:");
-
-	/*
-	 * Use a trick with different CRLF length to differentiate
-	 * between the correct CRLF and an incorrect CRLF.
-	 */
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Transfer-Encoding: chunked\r\n"
-		"\n"
-		"4\r\n"
-		"1234\r\n"
-		"0\r\n"
-		"Custom-Hdr: custom-data\r\n"
-		"\r\n")
-	{
-		/* 'Custom-Hdr:' is the first raw header in this example. */
-		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)req, &s_custom);
-
-		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW);
-		EXPECT_TRUE(req->body.len == 12);
-		EXPECT_TRUE(req->crlf.len == 1);
-	}
-
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		 "Transfer-Encoding: chunked\r\n"
-		 "\n"
-		 "5\r\n"
-		 "abcde\r\n"
-		 "0\r\n"
-		 "Custom-Hdr: custom-data\r\n"
-		 "\r\n")
-	{
-		/* 'Custom-Hdr:' is the first raw header in this example. */
-		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)resp, &s_custom);
-
-		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW);
-		EXPECT_TRUE(resp->body.len == 13);
-		EXPECT_TRUE(resp->crlf.len == 1);
-	}
 }
 
 TEST(http_parser, ows)
@@ -1607,6 +1656,13 @@ TEST(http_parser, accept)
 		EXPECT_TRUE(test_bit(TFW_HTTP_B_ACCEPT_HTML, req->flags));
 	}
 
+	FOR_REQ("GET / HTTP/1.1\r\n"
+		"Accept: textK/html\r\n"
+		"\r\n");
+	{
+		EXPECT_FALSE(test_bit(TFW_HTTP_B_ACCEPT_HTML, req->flags));
+	}
+
 	/*
 	 * '*' is part of the token alphabet, but for Accept header '*' symbol
 	 * has special meaning and doesn't included into mime types.
@@ -1671,18 +1727,12 @@ TEST(http_parser, accept)
 
 TEST(http_parser, host)
 {
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"Connection: close\r\n"
-		"\r\n");
+	FOR_REQ_SIMPLE("Host:\r\n"
+		       "Connection: close");
 
-	FOR_REQ("GET / HTTP/1.1\n"
-		"Host:  \n"
-		"\n");
+	FOR_REQ_SIMPLE("Host:  ");
 
-	FOR_REQ("GET / HTTP/1.1\n"
-		"Host:    tempesta-tech.com   \n"
-		"\n")
+	FOR_REQ_SIMPLE("Host:    tempesta-tech.com   ")
 	{
 		TfwStr *host = &req->h_tbl->tbl[TFW_HTTP_HDR_HOST];
 		TfwStr h_expected = {
@@ -1701,9 +1751,7 @@ TEST(http_parser, host)
 		EXPECT_EQ(req->host_port, 0);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\n"
-		"Host:    tempesta-tech.com:443   \n"
-		"\n")
+	FOR_REQ_SIMPLE("Host:    tempesta-tech.com:443   ")
 	{
 		TfwStr *host = &req->h_tbl->tbl[TFW_HTTP_HDR_HOST];
 		TfwStr h_expected = {
@@ -1725,9 +1773,7 @@ TEST(http_parser, host)
 		EXPECT_EQ(req->host_port, 443);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\n"
-		"Host:    [fd42:5ca1:e3a7::1000]   \n"
-		"\n")
+	FOR_REQ_SIMPLE("Host:    [fd42:5ca1:e3a7::1000]   ")
 	{
 		TfwStr *host = &req->h_tbl->tbl[TFW_HTTP_HDR_HOST];
 		TfwStr h_expected = {
@@ -1746,9 +1792,7 @@ TEST(http_parser, host)
 		EXPECT_EQ(req->host_port, 0);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\n"
-		"Host:    [fd42:5ca1:e3a7::1000]:443   \n"
-		"\n")
+	FOR_REQ_SIMPLE("Host:    [fd42:5ca1:e3a7::1000]:65535   ")
 	{
 		TfwStr *host = &req->h_tbl->tbl[TFW_HTTP_HDR_HOST];
 		TfwStr h_expected = {
@@ -1759,68 +1803,335 @@ TEST(http_parser, host)
 				{ .data = "[fd42:5ca1:e3a7::1000]" , .len = 22,
 				  .flags = TFW_STR_VALUE },
 				{ .data = ":" , .len = 1 },
-				{ .data = "443" , .len = 3,
+				{ .data = "65535", .len = 5,
 				  .flags = TFW_STR_VALUE },
 			},
-			.len = 35,
+			.len = 37,
 			.nchunks = 5
 		};
 		test_string_split(&h_expected, host);
 
-		EXPECT_EQ(req->host_port, 443);
+		EXPECT_EQ(req->host_port, 65535);
 	}
 
-	/* Port syntax is broken. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: tempesta-tech.com:443:1\n"
-			 "\n");
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: [fd42:5ca1:e3a7::1000]:443:1\n"
-			 "\n");
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: tempesta-tech.com::443\n"
-			 "\n");
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: tempesta-tech.com 443\n"
-			 "\n");
+	// Invalid port
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:0");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:65536");
 
-	/* No brackets around IPv6. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: fd42:5ca1:e3a7::1000\n"
-			 "\n");
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\n"
-			 "Host: [fd42:5ca1:e3a7::1000\n"
-			 "\n");
+	/* Port syntax is broken. */
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:443:1");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000]:443:1");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com::443");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000]::443");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com 443");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000] 443");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:-1");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000]:-1");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000]:");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: tempesta-tech.com:443-1");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000]-1");
+
+	/* Invalid brackets around IPv6. */
+	EXPECT_BLOCK_REQ_SIMPLE("Host: fd42:5ca1:e3a7::1000");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000][");
+	EXPECT_BLOCK_REQ_SIMPLE("Host: [fd42:5ca1:e3a7::1000[");
 }
 
-TEST(http_parser, chunked)
+TEST(http_parser, transfer_encoding)
 {
-	TfwHttpHdrTbl *ht;
+#define FOR_CHUNKED(chunks)						\
+	FOR_REQ("POST / HTTP/1.1\r\n"					\
+		"Transfer-Encoding: chunked\r\n"			\
+		"\r\n" chunks "\r\n")					\
+	{								\
+		EXPECT_TRUE(req->body.len == sizeof(chunks) - 1);	\
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CHUNKED, req->flags));	\
+	}								\
+	FOR_RESP("HTTP/1.1 200 OK\r\n"					\
+		 "Transfer-Encoding: chunked\r\n"			\
+		"\r\n" chunks "\r\n")					\
+	{								\
+		EXPECT_TRUE(resp->body.len == sizeof(chunks) - 1);	\
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CHUNKED, resp->flags));	\
+	}
+
+#define EXPECT_BLOCK_CHUNKED(chunks)			\
+	EXPECT_BLOCK_REQ("POST / HTTP/1.1\r\n"		\
+		"Transfer-Encoding: chunked\r\n"	\
+		"\r\n" chunks "\r\n");			\
+	EXPECT_BLOCK_RESP("HTTP/1.1 200 OK\r\n"		\
+		 "Transfer-Encoding: chunked\r\n"	\
+		 "\r\n" chunks "\r\n")
+
 	TfwStr h_connection;
 
+	/*
+	 * chunk-ext
+	 */
+	FOR_CHUNKED("0\r\n");
+	FOR_CHUNKED("000\r\n");
+	// Not strict compliance with RFC
+	FOR_CHUNKED("0;==;;" TOKEN_ALPHABET ";=;=\r\n");
+	EXPECT_BLOCK_CHUNKED("-1\r\n");
+	EXPECT_BLOCK_CHUNKED("invalid\r\n");
+	EXPECT_BLOCK_CHUNKED("0\r\n0\r\n"); // only one lash-chunk
+
+	/*
+	 * chunk
+	 */
+	FOR_CHUNKED("5;" TOKEN_ALPHABET "\n"
+		    "dummy\r\n"
+		    "0\r\n");
+	EXPECT_BLOCK_CHUNKED("4\r\n"
+			     "dummy\r\n"
+		   	     "0000\r\n");
+	EXPECT_BLOCK_CHUNKED("5(\r\n"
+			     "dummy\r\n"
+		   	     "0\r\n");
+	EXPECT_BLOCK_CHUNKED("5;\x09\r\n"
+			     "dummy\r\n"
+		   	     "0\r\n");
+	FOR_CHUNKED("F\n"
+		    "dummydummydummy\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("f\n"
+		    "dummydummydummy\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("130\r\n"
+		    "Well-Prince-so-Genoa-and-Lucca-are-now-just-family-"
+		    "estates-of-the-Buonapartes-But-I-warn-you-if-you-dont-"
+		    "tell-me-that-this-means-war-if-you-still-try-to-defend-"
+		    "the-infamies-and-horrors-perpetrated-by-that-Antichrist-"
+		    "I-really-believe-he-is-Antichrist-I-will-have-nothing-"
+		    "more-to-do-with-you-and-you-are-no\r\n"
+		    "0\r\n");
+	// chunk is sequence of octets (\x00-\xFF) except NUL because
+	// strings are null terminated
+	EXPECT_BLOCK_CHUNKED("1\r\n"
+			     "\x00\r\n"
+			     "0\r\n");
+	FOR_CHUNKED("1\r\n"
+		    "\x01\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("60\r\n"
+		    TOKEN_ALPHABET OTHER_DELIMETERS " \x09\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("1\r\n"
+		    "\x7F\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("1\r\n"
+		    "\x80\r\n"
+		    "0\r\n");
+	FOR_CHUNKED("1\r\n"
+		    "\xFF\r\n"
+		    "0\r\n");
+	// Several chunks
+	FOR_CHUNKED("5\r\n"
+		"abcde\r\n"
+		"a\r\n"
+		"fa01234567\r\n"
+		"2\n"
+		"89\r\n"
+		"0\n");
+
+	/*
+	 * Trailer headers
+	 */
 	FOR_REQ("POST / HTTP/1.1\r\n"
 		"Host:\r\n"
 		"Transfer-Encoding: chunked\r\n"
 		"\r\n"
-		"5;cext=val\r\n"
-		"abcde\r\n"
-		"a\r\n"
-		"f=01234567\r\n"
-		"2;a=1\n"
-		"89\r\n"
 		"0\n"
 		"Connection: close\r\n"
+		"If-Modified-Since: Wed, 08 Jan 2003 23:11:55 GMT\r\n"
 		"\r\n")
 	{
-		ht = req->h_tbl;
-
-		EXPECT_TRUE(req->body.len == 46);
-
-		tfw_http_msg_srvhdr_val(&ht->tbl[TFW_HTTP_HDR_CONNECTION],
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CHUNKED_TRAILER, req->flags));
+		tfw_http_msg_srvhdr_val(&req->h_tbl->tbl[TFW_HTTP_HDR_CONNECTION],
 					TFW_HTTP_HDR_CONNECTION,
 					&h_connection);
 		EXPECT_TRUE(tfw_str_eq_cstr(&h_connection, "close",
 					    sizeof("close") - 1, 0));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_CLOSE, req->flags));
+		EXPECT_TRUE(req->cond.m_date == 1042067515);
+		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
+	}
+
+	FOR_RESP("HTTP/1.1 200 OK\r\n"
+		 "Transfer-Encoding: chunked\r\n"
+		 "\n"
+		 "0\n"
+		 "Connection: keep-alive\r\n"
+		 "Pragma: no-cache\r\n"
+		 "Age: 2147483647\r\n"
+		 "\r\n")
+	{
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CHUNKED_TRAILER, resp->flags));
+		tfw_http_msg_srvhdr_val(&resp->h_tbl->tbl[TFW_HTTP_HDR_CONNECTION],
+					TFW_HTTP_HDR_CONNECTION,
+					&h_connection);
+		EXPECT_TRUE(tfw_str_eq_cstr(&h_connection, "keep-alive",
+					    sizeof("keep-alive") - 1, 0));
+		EXPECT_TRUE(test_bit(TFW_HTTP_B_CONN_KA, resp->flags));
+		EXPECT_TRUE(resp->cache_ctl.flags & TFW_HTTP_CC_PRAGMA_NO_CACHE);
+		EXPECT_TRUE(resp->cache_ctl.age == 2147483647);
+	}
+
+	EXPECT_BLOCK_CHUNKED("0\r\nTransfer-Encoding: chunked\r\n");
+
+	// Invalid header name
+	EXPECT_BLOCK_CHUNKED("0\r\n"
+			     "Cust@m-Hdr?: custom-data\r\n");
+
+	/*
+	 * CRLF
+	 */
+	EXPECT_BLOCK_CHUNKED("5dummy\r\n"
+		   	     "0\r\n");
+	EXPECT_BLOCK_CHUNKED("5\r\n"
+			     "dummy"
+		   	     "0\r\n");
+	EXPECT_BLOCK_CHUNKED("5\r\n"
+			     "dummy\r\n"
+		   	     "0");
+
+	/*
+	 * "Content-Length:" and "Transfer-Encoding:" header fields
+	 * may not be present together in a request.
+	 */
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Content-Length: 4\r\n"
+			 "Transfer-Encoding: chunked\r\n"
+			 "\r\n"
+			 "4\r\n"
+			 "1234\r\n"
+			 "0\r\n"
+			 "\r\n");
+	/*
+	 * "chunked" coding must be present in a request if there's
+	 * any other coding (i.e. "Transfer-Encoding" is present).
+	 */
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Transfer-Encoding: gzip\r\n"
+			 "\r\n"
+			 "4\r\n"
+			 "1234\r\n"
+			 "0\r\n"
+			 "\r\n");
+	/*
+	 * "Content-Length:" and "Transfer-Encoding:" header fields
+	 * may not be present together in a response.
+	 */
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+			  "Content-Length: 7\r\n"
+			  "Transfer-Encoding: chunked\r\n"
+			  "\r\n"
+			  "7\r\n"
+			  "1234567\r\n"
+			  "0\r\n"
+			  "\r\n");
+
+	/* "chunked" coding must be the last coding. */
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+			  "Transfer-Encoding: chunked, gzip\r\n"
+			  "\r\n"
+			  "7\r\n"
+			  "1234567\r\n"
+			  "0\r\n"
+			 "Connection: keep-alive\r\n"
+			  "\r\n");
+
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Transfer-Encoding: chunked, gzip\r\n"
+			 "Connection: close\r\n"
+			 "\r\n"
+			 "4\r\n"
+			 "1234\r\n"
+			 "0\r\n"
+			 "\r\n");
+
+	/* "chunked" coding may not be applied twice. */
+	EXPECT_BLOCK_RESP("HTTP/1.0 200 OK\r\n"
+			  "Transfer-Encoding: gzip, chunked\r\n"
+			  "Transfer-Encoding: chunked\r\n"
+			  "\r\n"
+			  "7\r\n"
+			  "1234567\r\n"
+			  "0\r\n"
+			  "\r\n");
+	/*
+	 * If we have Transfer-Encoding, then we must have 'chunked',
+	 * so the request must be blocked.
+	 */
+	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
+			 "Transfer-Encoding: chunkedchunked\r\n"
+			 "\r\n"
+			 "0\r\n"
+			 "\r\n");
+
+	EXPECT_BLOCK_RESP("HTTP/1.1 101 Switching Protocols OK\r\n"
+			  "Transfer-Encoding: chunked\r\n"
+			  "\r\n"
+			  "0\r\n\r\n");
+	EXPECT_BLOCK_RESP("HTTP/1.1 199 Dummy\r\n"
+			  "Transfer-Encoding: chunked\r\n"
+			  "\r\n"
+			  "0\r\n\r\n");
+	EXPECT_BLOCK_RESP("HTTP/1.1 204 No Content\r\n"
+			  "Transfer-Encoding: chunked\r\n"
+			  "\r\n"
+			  "0\r\n\r\n");
+
+	// For now the other transfer encodings (gzip, deflate etc.)
+	// are not processed, just passed by the parser
+	FOR_REQ("GET / HTTP/1.1\r\n"
+		"Transfer-Encoding: " TOKEN_ALPHABET " ,  dummy \t, chunked\r\n"
+		"\r\n"
+		"0\r\n"
+		"\r\n");
+	FOR_RESP("HTTP/1.0 200 OK\r\n"
+		 "Transfer-Encoding: " TOKEN_ALPHABET "\t, dummy\t, chunked\r\n"
+		 "\r\n"
+		 "0\r\n"
+		 "\r\n");
+
+#undef EXPECT_BLOCK_CHUNKED
+#undef FOR_CHUNKED
+}
+
+/*
+ * This test ensures that there's not retrogression in handling CRLF.
+ * The bug was that in case of trailing headers CRLF that was set to
+ * point at location after the headers at the beginning of a message
+ * was later reset to point at location after the trailing headers.
+ */
+TEST(http_parser, crlf_trailer)
+{
+	unsigned int id;
+	DEFINE_TFW_STR(s_custom, "Custom-Hdr:");
+	DEFINE_TFW_STR(s_custom2, "Custom-Hdr2:");
+
+	/*
+	 * Use a trick with different CRLF length to differentiate
+	 * between the correct CRLF and an incorrect CRLF.
+	 */
+	FOR_REQ("GET / HTTP/1.1\r\n"
+		"Transfer-Encoding: chunked\r\n"
+		"\n"
+		"4\r\n"
+		"1234\r\n"
+		"0\r\n"
+		"Custom-Hdr: custom-data\r\n"
+		"\r\n")
+	{
+		/* 'Custom-Hdr:' is the first raw header in this example. */
+		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)req, &s_custom);
+
+		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW);
+		EXPECT_TRUE(req->body.len == 12);
+		EXPECT_TRUE(req->crlf.len == 1);
 	}
 
 	FOR_RESP("HTTP/1.1 200 OK\r\n"
@@ -1828,73 +2139,37 @@ TEST(http_parser, chunked)
 		 "\n"
 		 "5\r\n"
 		 "abcde\r\n"
-		 "0;test\n"
-		 "Connection: keep-alive\r\n"
+		 "0\r\n"
+		 "Custom-Hdr: custom-data\r\n"
 		 "\r\n")
 	{
-		ht = resp->h_tbl;
+		/* 'Custom-Hdr:' is the first raw header in this example. */
+		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)resp, &s_custom);
 
-		EXPECT_TRUE(resp->body.len == 17);
-
-		tfw_http_msg_srvhdr_val(&ht->tbl[TFW_HTTP_HDR_CONNECTION],
-					TFW_HTTP_HDR_CONNECTION,
-					&h_connection);
-		EXPECT_TRUE(tfw_str_eq_cstr(&h_connection, "keep-alive",
-					    sizeof("keep-alive") - 1, 0));
+		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW);
+		EXPECT_TRUE(resp->body.len == 13);
+		EXPECT_TRUE(resp->crlf.len == 1);
 	}
 
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "Host:\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "5;cext=val\r\n"
-			 "abcde\r\n"
-			 "10\r\n" /* decimal length instead of hex */
-			 "f=01234567\r\n"
-			 "2;a=1\n"
-			 "89\r\n"
-			 "0\n"
-			 "Connection: close\r\n"
-			 "\r\n");
-}
+	FOR_RESP("HTTP/1.1 200 OK\r\n"
+		 "Transfer-Encoding: chunked\r\n"
+		 "\n"
+		 "5\r\n"
+		 "abcde\r\n"
+		 "0\r\n"
+		 "Custom-Hdr: custom-data\r\n"
+		 "Custom-Hdr2: other-data\r\n"
+		 "\r\n")
+	{
+		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)resp, &s_custom);
+		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW);
 
-TEST(http_parser, chunk_size)
-{
-	EXPECT_BLOCK_REQ("POST / HTTP/1.1\r\n"
-			 "Host:\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "00000000000000007\r\n"
-			 "abcdefg\r\n"
-			 "0\n"
-			 "\r\n");
+		id = tfw_http_msg_hdr_lookup((TfwHttpMsg *)resp, &s_custom2);
+		EXPECT_TRUE(id == TFW_HTTP_HDR_RAW + 1);
 
-	EXPECT_BLOCK_REQ("POST / HTTP/1.1\r\n"
-			 "Host:\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "7\r\n"
-			 "abcdefg\r\n"
-			 "00000000000000000\r\n"
-			 "\r\n");
-
-	EXPECT_BLOCK_REQ("POST / HTTP/1.1\r\n"
-			 "Host:\r\n"
-			 "Transfer-Encoding: chunked\r\n"
-			 "\r\n"
-			 "8000000000000000\r\n"
-			 "abcdefg\r\n"
-			 "0\r\n"
-			 "\r\n");
-
-	FOR_REQ("POST / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"Transfer-Encoding: chunked\r\n"
-		"\r\n"
-		"0000000000000007\r\n"
-		"abcdefg\r\n"
-		"0\r\n"
-		"\r\n");
+		EXPECT_TRUE(resp->body.len == 13);
+		EXPECT_TRUE(resp->crlf.len == 1);
+	}
 }
 
 TEST(http_parser, cookie)
@@ -2112,138 +2387,86 @@ TEST(http_parser, set_cookie)
 			  "0123456789");
 }
 
+// For ETag and If-None-Match headers
+#define COMMON_ETAG_BLOCK(header, BLOCK_MACRO)		\
+	BLOCK_MACRO(header ": \"dummy\"\r\n"		\
+		   ": \"dummy\"");			\
+	BLOCK_MACRO(header ": \"dummy");		\
+	BLOCK_MACRO(header ": dummy\"");		\
+	BLOCK_MACRO(header ": 'dummy'");		\
+	BLOCK_MACRO(header ": W/ \"dummy\"");		\
+	BLOCK_MACRO(header ": w/\"dummy\"");		\
+	BLOCK_MACRO(header ": \"\x00\"");		\
+	BLOCK_MACRO(header ": \"\x0F\"");		\
+	BLOCK_MACRO(header ": \"\x7F\"");		\
+	BLOCK_MACRO(header ": \" \"");			\
+	BLOCK_MACRO(header ": \"\"\"")
+
 TEST(http_parser, etag)
 {
-#define RESP_ETAG_START							\
-	"HTTP/1.1 200 OK\r\n"						\
-	"Date: Mon, 23 May 2005 22:38:34 GMT\r\n"			\
-	"Content-Type: text/html; charset=UTF-8\r\n"			\
-	"Content-Encoding: UTF-8\r\n"					\
-	"Content-Length: 10\r\n"					\
-	"Last-Modified: Wed, 08 Jan 2003 23:11:55 GMT\r\n"		\
+#define RESP_ETAG_START                                    \
+	"HTTP/1.1 200 OK\r\n"                              \
+	"Date: Mon, 23 May 2005 22:38:34 GMT\r\n"          \
+	"Content-Type: text/html; charset=UTF-8\r\n"       \
+	"Content-Encoding: UTF-8\r\n"                      \
+	"Content-Length: 10\r\n"                           \
+	"Last-Modified: Wed, 08 Jan 2003 23:11:55 GMT\r\n" \
 	"Server: Apache/1.3.3.7 (Unix) (Red-Hat/Linux)\r\n"
 
-#define RESP_ETAG_END							\
-	"Accept-Ranges: bytes\r\n"					\
-	"Connection: close\r\n"						\
-	"\r\n"								\
+#define RESP_ETAG_END              \
+	"Accept-Ranges: bytes\r\n" \
+	"Connection: close\r\n"    \
+	"\r\n"                     \
 	"0123456789"
 
-#define ETAG_VALUE	"8278-DWzgdpjT5G+X/kwWVjosOBLzcbo"
-#define ETAG_H		"ETag:   \""
-#define ETAG_TAIL	"\"  \r\n"
-#define ETAG		ETAG_H ETAG_VALUE ETAG_TAIL
-#define ETAG_H_WEAK	"ETag:   W/\""
-#define ETAG_WEAK	ETAG_H_WEAK ETAG_VALUE ETAG_TAIL
-
-	FOR_RESP(RESP_ETAG_START
-		 ETAG
-		 RESP_ETAG_END)
-	{
-		TfwStr h_etag, s_etag;
-		DEFINE_TFW_STR(exp_etag, ETAG_VALUE "\"");
-
-		tfw_http_msg_srvhdr_val(&resp->h_tbl->tbl[TFW_HTTP_HDR_ETAG],
-					TFW_HTTP_HDR_ETAG,
-					&h_etag);
-		s_etag = tfw_str_next_str_val(&h_etag);
-		EXPECT_EQ(tfw_strcmpspn(&s_etag, &exp_etag, '"'), 0);
-		if (!TFW_STR_EMPTY(&s_etag)) {
-			EXPECT_FALSE((TFW_STR_CHUNK(&s_etag, 0))->flags
-				     & TFW_STR_ETAG_WEAK);
-		}
-
-		s_etag = tfw_str_next_str_val(&s_etag);
-		EXPECT_TRUE(TFW_STR_EMPTY(&s_etag));
+#define FOR_ETAG(header, expected, EXPECT_WEAK)				\
+	FOR_RESP(RESP_ETAG_START header "\r\n" RESP_ETAG_END)		\
+	{								\
+		TfwStr h_etag, s_etag;					\
+		DEFINE_TFW_STR(exp_etag, expected);			\
+									\
+		tfw_http_msg_srvhdr_val(				\
+			&resp->h_tbl->tbl[TFW_HTTP_HDR_ETAG],		\
+			TFW_HTTP_HDR_ETAG, &h_etag);			\
+		s_etag = tfw_str_next_str_val(&h_etag);			\
+		EXPECT_EQ(tfw_strcmpspn(&s_etag, &exp_etag, '"'), 0);	\
+		if (!TFW_STR_EMPTY(&s_etag)) {				\
+			EXPECT_WEAK((TFW_STR_CHUNK(&s_etag, 0))->flags &\
+				TFW_STR_ETAG_WEAK);			\
+		}							\
+									\
+		s_etag = tfw_str_next_str_val(&s_etag);			\
+		EXPECT_TRUE(TFW_STR_EMPTY(&s_etag));			\
 	}
 
-	FOR_RESP(RESP_ETAG_START
-		 ETAG_WEAK
-		 RESP_ETAG_END)
-	{
-		TfwStr h_etag, s_etag;
-		DEFINE_TFW_STR(exp_etag, ETAG_VALUE "\"");
+#define ETAG_BLOCK(header)						\
+	EXPECT_BLOCK_RESP(RESP_ETAG_START header "\r\n" RESP_ETAG_END)
 
-		tfw_http_msg_srvhdr_val(&resp->h_tbl->tbl[TFW_HTTP_HDR_ETAG],
-					TFW_HTTP_HDR_ETAG,
-					&h_etag);
-		s_etag = tfw_str_next_str_val(&h_etag);
-		EXPECT_EQ(tfw_strcmpspn(&s_etag, &exp_etag, '"'), 0);
-		if (!TFW_STR_EMPTY(&s_etag)) {
-			EXPECT_TRUE((TFW_STR_CHUNK(&s_etag, 0))->flags
-				    & TFW_STR_ETAG_WEAK);
-		}
-
-		s_etag = tfw_str_next_str_val(&s_etag);
-		EXPECT_TRUE(TFW_STR_EMPTY(&s_etag));
-	}
-
-	FOR_RESP(RESP_ETAG_START
-		 "ETag: \"\" \r\n"
-		 RESP_ETAG_END)
-	{
-		TfwStr h_etag, s_etag;
-		DEFINE_TFW_STR(exp_etag, "\"");
-
-		tfw_http_msg_srvhdr_val(&resp->h_tbl->tbl[TFW_HTTP_HDR_ETAG],
-					TFW_HTTP_HDR_ETAG,
-					&h_etag);
-		s_etag = tfw_str_next_str_val(&h_etag);
-		EXPECT_EQ(tfw_strcmpspn(&s_etag, &exp_etag, '"'), 0);
-		if (!TFW_STR_EMPTY(&s_etag)) {
-			EXPECT_FALSE((TFW_STR_CHUNK(&s_etag, 0))->flags
-				     & TFW_STR_ETAG_WEAK);
-		}
-
-		s_etag = tfw_str_next_str_val(&s_etag);
-		EXPECT_TRUE(TFW_STR_EMPTY(&s_etag));
-	}
-
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: \"3f80f-1b6-3e1cb03b\"\r\n"
-			  "ETag: \"3f80f-1b6-3e1cb03b\"\r\n"
-			  RESP_ETAG_END);
-
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: \"3f80f-1b6-3e1cb03b\r\n"
-			  RESP_ETAG_END);
-
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: 3f80f-1b6-3e1cb03b\"\r\n"
-			  RESP_ETAG_END);
-
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: W/  \"3f80f-1b6-3e1cb03b\"\r\n"
-			  RESP_ETAG_END);
+	FOR_ETAG("ETag:   \"dummy\"  ",  "dummy\"", EXPECT_FALSE);
+	FOR_ETAG("ETag:   W/\"dummy\"  ", "dummy\"", EXPECT_TRUE);
+	FOR_ETAG("ETag: \"\" ", "\"", EXPECT_FALSE);
+	FOR_ETAG("ETag: W/\"\"", "\"", EXPECT_TRUE);
+	FOR_ETAG("ETag: \"" ETAG_ALPHABET "\"",  ETAG_ALPHABET "\"", EXPECT_FALSE);
+	FOR_ETAG("ETag: W/\"" ETAG_ALPHABET "\"",  ETAG_ALPHABET "\"", EXPECT_TRUE);
 
 	/* Same code is used to parse ETag header and If-None-Match header. */
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: \"3f80f\", \"3e1cb03b\"\r\n"
-			  RESP_ETAG_END);
+	ETAG_BLOCK("ETag: \"dummy1\", \"dummy2\"");
+	ETAG_BLOCK("ETag: *\r\n");
+	COMMON_ETAG_BLOCK("ETag", ETAG_BLOCK);
 
-	EXPECT_BLOCK_RESP(RESP_ETAG_START
-			  "ETag: *\r\n"
-			  RESP_ETAG_END);
-
-#undef RESP_ETAG_START
+#undef ETAG_BLOCK
+#undef FOR_ETAG
 #undef RESP_ETAG_END
-#undef ETAG
-#undef ETAG_WEAK
-#undef ETAG_H
-#undef ETAG_H_WEAK
-#undef ETAG_TAIL
-#undef ETAG_VALUE
+#undef RESP_ETAG_START
 }
 
 TEST(http_parser, if_none_match)
 {
-#define ETAG_1		"3f80f-1b6-3e1cb03b"
-#define ETAG_2		"dhjkshfkjSDFDS"
-#define ETAG_3		"3f80f"
+#define ETAG_1	ETAG_ALPHABET
+#define ETAG_2	"dummy2"
+#define ETAG_3	"dummy3"
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"If-None-Match:    \"" ETAG_1 "\"  \r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("If-None-Match:    \"" ETAG_1 "\"  ")
 	{
 		TfwStr h_inm = req->h_tbl->tbl[TFW_HTTP_HDR_IF_NONE_MATCH];
 		TfwStr s_etag;
@@ -2262,9 +2485,7 @@ TEST(http_parser, if_none_match)
 		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_ETAG_ANY);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"If-None-Match:    \"\"  \r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("If-None-Match:    \"\"  ")
 	{
 		TfwStr h_inm = req->h_tbl->tbl[TFW_HTTP_HDR_IF_NONE_MATCH];
 		TfwStr s_etag;
@@ -2283,9 +2504,7 @@ TEST(http_parser, if_none_match)
 		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_ETAG_ANY);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"If-None-Match:    \"" ETAG_1 "\", \"" ETAG_2 "\"  \r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("If-None-Match:    \"" ETAG_1 "\", \"" ETAG_2 "\"  ")
 	{
 		TfwStr h_inm = req->h_tbl->tbl[TFW_HTTP_HDR_IF_NONE_MATCH];
 		TfwStr s_etag;
@@ -2312,9 +2531,7 @@ TEST(http_parser, if_none_match)
 		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_ETAG_ANY);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"If-None-Match:    \"" ETAG_1 "\", W/\"" ETAG_2 "\", \"" ETAG_3 "\"  \r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("If-None-Match:    \"" ETAG_1 "\", W/\"" ETAG_2 "\", \"" ETAG_3 "\"  ")
 	{
 		TfwStr h_inm = req->h_tbl->tbl[TFW_HTTP_HDR_IF_NONE_MATCH];
 		TfwStr s_etag;
@@ -2349,54 +2566,31 @@ TEST(http_parser, if_none_match)
 		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_ETAG_ANY);
 	}
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"If-None-Match:   *  \r\n"
-		"\r\n")
+	FOR_REQ_SIMPLE("If-None-Match:   *  ")
 	{
 		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_ETAG_ANY);
 	}
 
 	/* Empty header */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \r\n"
-			 "\r\n");
+	EXPECT_BLOCK_REQ_SIMPLE("If-None-Match: ");
 	/* Not quoted value. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: " ETAG_1 "\r\n"
-			 "\r\n");
-	/* No closing quote. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \"" ETAG_1 "\r\n"
-			 "\r\n");
-	/* No opening quote. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: " ETAG_1 "\"\r\n"
-			 "\r\n");
-	/* Duplicated header. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \"" ETAG_1 "\"\r\n"
-			 "If-None-Match: \"" ETAG_1 "\"\r\n"
-			 "\r\n");
+	EXPECT_BLOCK_REQ_SIMPLE("If-None-Match: " ETAG_2);
 	/* Incomplete header. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \"" ETAG_1 "\", \r\n"
-			 "\r\n");
+	EXPECT_BLOCK_REQ_SIMPLE( "If-None-Match: \"" ETAG_2 "\", ");
 	/* No delimiter. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \"" ETAG_1 "\" \"" ETAG_2 "\" \r\n"
-			 "\r\n");
+	EXPECT_BLOCK_REQ_SIMPLE("If-None-Match: \"" ETAG_2 "\" \"" ETAG_3 "\" ");
 	/* Etag list + Any etag. */
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: \"" ETAG_1 "\", * \r\n"
-			 "\r\n");
-	EXPECT_BLOCK_REQ("GET / HTTP/1.1\r\n"
-			 "If-None-Match: *, \"" ETAG_1 "\" \r\n"
-			 "\r\n");
+	EXPECT_BLOCK_REQ_SIMPLE("If-None-Match: \"" ETAG_2 "\", * ");
+	EXPECT_BLOCK_REQ_SIMPLE("If-None-Match: *, \"" ETAG_2 "\" ");
+
+	COMMON_ETAG_BLOCK("If-None-Match", EXPECT_BLOCK_REQ_SIMPLE);
 
 #undef ETAG_1
 #undef ETAG_2
 #undef ETAG_3
 }
+
+#undef COMMON_ETAG_BLOCK
 
 TEST(http_parser, referer)
 {
@@ -2485,7 +2679,7 @@ TEST(http_parser, req_hop_by_hop)
 	"Pragma: no-cache, fooo \r\n"					\
 	"Cookie: session=42; theme=dark\r\n"				\
 	"Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\t \n"	\
-	"\r\n"								\
+	"\r\n"
 
 	/* No Hop-by-hop headers */
 	FOR_REQ(REQ_HBH_START
@@ -3080,244 +3274,218 @@ TEST(http_parser, xff)
 
 TEST(http_parser, date)
 {
+/*
+ * So many macros significantly slows compilation down,
+ * but to optimize it's required to rewrite all macros to functions
+ * (FOR_RESP_SIMPLE can not be used for runtime strings).
+ */
+#define FOR_EACH_DATE(strdate, expect_seconds, FLAG_MACRO)			\
+	FOR_RESP_SIMPLE("Last-Modified:" strdate)				\
+	{									\
+		EXPECT_TRUE(resp->last_modified == expect_seconds);		\
+		FLAG_MACRO(test_bit(TFW_HTTP_B_HDR_LMODIFIED, resp->flags));	\
+	}									\
+	FOR_RESP_SIMPLE("Date:" strdate)					\
+	{									\
+		EXPECT_TRUE(resp->date == expect_seconds);			\
+		FLAG_MACRO(test_bit(TFW_HTTP_B_HDR_DATE, resp->flags));		\
+	}									\
+	FOR_RESP_SIMPLE("Expires:" strdate)					\
+	{									\
+		EXPECT_TRUE(resp->cache_ctl.expires == expect_seconds);		\
+		FLAG_MACRO(resp->cache_ctl.flags & TFW_HTTP_CC_HDR_EXPIRES);	\
+	}									\
+	FOR_REQ_SIMPLE("If-Modified-Since:" strdate)				\
+	{									\
+		EXPECT_TRUE(req->cond.m_date == expect_seconds);		\
+		FLAG_MACRO(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);		\
+	}
+
+#define FOR_EACH_DATE_VALID(strdate, expect_seconds)				\
+	FOR_EACH_DATE(strdate, expect_seconds, EXPECT_TRUE)
+
+#define FOR_EACH_DATE_INVALID(strdate)						\
+	FOR_EACH_DATE(strdate, 0, EXPECT_FALSE)
+
+// Use where exactly 4-digit year tests make sence and 2-digits don't
+#define FOR_EACH_DATE_RFC_822_ISOC(day, month, year, time, expect_seconds,	\
+				   FLAG_MACRO)					\
+	/* Day name is redundant so is skipped on parsing */			\
+	FOR_EACH_DATE("Inv, " day " " month " " year " " time " GMT",		\
+		      expect_seconds, FLAG_MACRO);				\
+	/* For ISOC format test only 2 digits in day */				\
+	FOR_EACH_DATE("Inv " month " " day " " time " " year, expect_seconds,	\
+		      FLAG_MACRO)
+
+#define FOR_EACH_DATE_RFC_822_ISOC_VALID(day, month, year, time, expect_seconds)\
+	FOR_EACH_DATE_RFC_822_ISOC(day, month, year, time, expect_seconds,	\
+				   EXPECT_TRUE)
+
+#define FOR_EACH_DATE_RFC_822_ISOC_INVALID(day, month, year, time)		\
+	FOR_EACH_DATE_RFC_822_ISOC(day, month, year, time, 0, EXPECT_FALSE)
+
+#define FOR_EACH_DATE_FORMAT(day, month, year, year_2d, time, expect_seconds,	\
+			     FLAG_MACRO)					\
+	FOR_EACH_DATE_RFC_822_ISOC(day, month, year, time, expect_seconds,	\
+		      		   FLAG_MACRO);					\
+	/* ISO850 */								\
+	FOR_EACH_DATE("Invalid, " day "-" month "-" year_2d " " time " GMT", 	\
+		      expect_seconds, FLAG_MACRO)
+
+#define FOR_EACH_DATE_FORMAT_VALID(day, month, year, year_2d, time,		\
+				   expect_seconds)				\
+	FOR_EACH_DATE_FORMAT(day, month, year, year_2d, time, expect_seconds,	\
+			     EXPECT_TRUE)
+
+#define FOR_EACH_DATE_FORMAT_INVALID(day, month, year, year_2d, time)		\
+	FOR_EACH_DATE_FORMAT(day, month, year, year_2d, time, 0, EXPECT_FALSE)
+
+	FOR_EACH_DATE_FORMAT_VALID("31", "Jan", "2012", "12", "15:02:53",
+				   1328022173);
+	FOR_EACH_DATE_FORMAT_INVALID("31", "JAN", "2012", "12", "15:02:53");
+
+	FOR_EACH_DATE_FORMAT_INVALID(" 31", "Jan", "2012", "12", "15:02:53");
+	FOR_EACH_DATE_FORMAT_INVALID("31", " Jan", "2012", "12", "15:02:53");
+	FOR_EACH_DATE_FORMAT_INVALID("31", "Jan", " 2012", " 12", "15:02:53");
+	FOR_EACH_DATE_FORMAT_INVALID("31", "Jan", "2012", "12", " 15:02:53");
+
 	/*
-	 * Date is encoded in RFC 822 format, the date must be correctly
-	 * parsed
+	 * Date ranges.
 	 */
-	FOR_RESP("HTTP/1.1 200 OK\r\n"
-		"Content-Length: 0\r\n"
-		"Last-Modified: Tue, 31 Jan 2012 15:02:53 GMT\r\n"
-		"Date: Tue, 31 Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(resp->last_modified == 1328022173);
-		EXPECT_TRUE(resp->date == 1328022173);
-	}
+	// Less then 01 Jan 1970
+	// Treat as 999 year
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("01", "Jan", "0999", "00:00:00");
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("31", "Dec", "1969", "23:59:59");
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("01", "Jan", "1970", "00:00:00");
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("01", "Jan", "0070", "00:00:00");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 01 Jan 1970 00:00:01 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 1);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	// More then 01 Jan 1970
+	/*
+	 * For ISO 850 this implementation violates RFC:
+	 *
+	 * Recipients of a timestamp value in rfc850-date format, which uses a
+	 * two-digit year, MUST interpret a timestamp that appears to be more
+	 * than 50 years in the future as representing the most recent year in
+	 * the past that had the same last two digits.
+	 *
+	 * But it's done intensionally, also Nginx implements the same logic.
+	 */
+	FOR_EACH_DATE_FORMAT_VALID("01", "Jan", "1970", "70", "00:00:01", 1);
+	FOR_EACH_DATE_RFC_822_ISOC_VALID("01", "Jan", "0070", "00:00:01", 1);
+	// 2000
+	FOR_EACH_DATE_FORMAT_VALID("01", "Jan", "0000", "00", "00:00:00",
+					 946684800);
+	FOR_EACH_DATE_VALID("Invalid, 01-Jan-00 00:00:00 GMT", 946684800);
+	// 2069
+	FOR_EACH_DATE_FORMAT_VALID("31", "Dec", "0069", "69", "23:59:59",
+					 3155759999);
+	FOR_EACH_DATE_RFC_822_ISOC_VALID("31", "Dec", "9999", "23:59:59",
+					 253402300799);
+	/*
+	 * Incorrect day
+	 */
+	FOR_EACH_DATE_FORMAT_INVALID("", "Jan", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("0", "Jan", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("1", "Jan", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("32", "Jan", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("-1", "Jan", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("invalid", "Jan", "2000", "00",
+				     "00:00:00");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 1328022173);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	FOR_EACH_DATE_FORMAT_VALID("30", "Apr", "1978", "78", "00:00:00",
+				   262742400);
+	FOR_EACH_DATE_FORMAT_INVALID("31", "Apr", "1995", "95", "00:00:00");
+	FOR_EACH_DATE_FORMAT_VALID("31", "Jul", "2003", "03", "00:00:00",
+				   1059609600);
+	FOR_EACH_DATE_FORMAT_VALID("30", "Sep", "2009", "09", "00:00:00",
+				   1254268800);
+	FOR_EACH_DATE_FORMAT_INVALID("31", "Sep", "2050", "50", "00:00:00");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Dec 9999 23:59:59 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 253402300799);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	// Leap years
+	FOR_EACH_DATE_FORMAT_VALID("29", "Feb", "1996", "96", "00:00:00", 825552000);
+	FOR_EACH_DATE_FORMAT_INVALID("29", "Feb", "1999", "99", "00:00:00");
+
+	/* Incorrect month. */
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Ja", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Janu", "2000", "00", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "January", "2000", "00", "00:00:00");
+	// Kernel panic will occur (TODO fix)
+	//FOR_EACH_DATE_FORMAT_INVALID("01 Jab 2000 00:00:00");
+
+	/* Incorrect year. */
+	// Only 4 digits for RFC 822 & ISOC and 2 digits for RFC 850 allowed
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "0", "0", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "1", "1", "00:00:00");
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("01", "Jan", "44", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "000", "000","00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "999", "999", "00:00:00");
+	FOR_EACH_DATE_RFC_822_ISOC_INVALID("01", "Jan", "10000", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "", "", "00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "-1", "-1","00:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "invalid", "invalid",
+				     "00:00:00");
+
+	/* Incorrect hours. */
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", ":00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "0:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "000:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "24:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "100:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "-1:00:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "invalid:00:00");
+
+	/* Incorrect minutes. */
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00::00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:0:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:000:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:60:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:100:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:-1:00");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:invalid:00");
 
 	/*
-	 * Date is encoded in RFC 850 format, the date must be correctly
-	 * parsed
+	 * Incorrect seconds.
 	 */
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Invalid, 01-Jan-70 00:00:01 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 1);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	/* Date is encoded in ISOC format, the date must be correctly parsed */
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv Jan 31 15:02:53 2012\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 1328022173);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv Jan  1 00:00:01 1970\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 1);
-		EXPECT_TRUE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:0");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:000");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:60");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:100");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:-1");
+	FOR_EACH_DATE_FORMAT_INVALID("01", "Jan", "2000", "00", "00:00:invalid");
+	// Leap seconds are invalid
+	FOR_EACH_DATE_FORMAT_INVALID("30", "Jun", "1992", "92", "23:59:60");
 
 	/*
-	 * Date looks like encoded in RFC 822 format, but encoding contains
-	 * errors, so the date can't be parsed
+	 * Format specific tests.
 	 */
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 01 Jan 10000 00:00:00 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	// Only GMT allowed
+	FOR_EACH_DATE_INVALID("Inv, 01 Jan 2000 00:00:00 EST");
+	FOR_EACH_DATE_INVALID("Invalid, 01-Jan-00 00:00:00 EST");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: invalid\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	// GMT is requred
+	FOR_EACH_DATE_INVALID("Inv, 01 Jan 2000 00:00:00");
+	FOR_EACH_DATE_INVALID("Invalid, 01-Jan-00 00:00:00");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: invalid, 31 Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	// ISOC
+	// Only 2 spaces for 1-digit day and 1 space for 2-digit day
+	FOR_EACH_DATE_VALID("Inv Jan  1 00:00:01 1970", 1);
+	FOR_EACH_DATE_VALID("Inv Jan 01 00:00:01 1970", 1);
+	FOR_EACH_DATE_INVALID("Inv Jan   1 00:00:01 1970");
+	FOR_EACH_DATE_INVALID("Inv Jan  01 00:00:01 1970");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+	FOR_EACH_DATE_INVALID("invalid");
 
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 0 Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 123 Jan 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Ta 2012 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 15:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 :02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 123:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 24:02:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15::53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:123:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:60:53 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:02: GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:02:123 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
-
-	FOR_REQ("GET / HTTP/1.1\r\n"
-		"Host:\r\n"
-		"If-Modified-Since: Inv, 31 Jan 2012 15:02:60 GMT\r\n"
-		"\r\n")
-	{
-		EXPECT_TRUE(req->cond.m_date == 0);
-		EXPECT_FALSE(req->cond.flags & TFW_HTTP_COND_IF_MSINCE);
-	}
+#undef FOR_EACH_DATE_FORMAT_INVALID
+#undef FOR_EACH_DATE_FORMAT_VALID
+#undef FOR_EACH_DATE_FORMAT
+#undef FOR_EACH_DATE_RFC_822_ISOC_INVALID
+#undef FOR_EACH_DATE_RFC_822_ISOC_VALID
+#undef FOR_EACH_DATE_RFC_822_ISOC
+#undef FOR_EACH_DATE_INVALID
+#undef FOR_EACH_DATE_VALID
+#undef FOR_EACH_DATE
 }
 
 TEST(http_parser, method_override)
@@ -3385,6 +3553,111 @@ TEST(http_parser, method_override)
 	}
 }
 
+TEST(http_parser, vchar)
+{
+// Tests that header is validated by ctext_vchar alphabet
+#define TEST_VCHAR_HEADER(header, id, MSG_TYPE)				\
+	FOR_##MSG_TYPE##_HDR_EQ(header ":", id);			\
+	FOR_##MSG_TYPE##_HDR_EQ(header ":" VCHAR_ALPHABET, id);		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x00");		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x08");		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x0B");		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x14");		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x1F");		\
+	EXPECT_BLOCK_##MSG_TYPE##_SIMPLE(header ":\x7F");
+
+#define TEST_RAW_REQ(header) TEST_VCHAR_HEADER(header, TFW_HTTP_HDR_RAW, REQ)
+#define TEST_RAW_RESP(header) TEST_VCHAR_HEADER(header, TFW_HTTP_HDR_RAW, RESP)
+
+	// Special headers
+	TEST_VCHAR_HEADER("Content-Type", TFW_HTTP_HDR_CONTENT_TYPE, RESP);
+	TEST_VCHAR_HEADER("Server", TFW_HTTP_HDR_SERVER, RESP);
+	TEST_VCHAR_HEADER("User-Agent", TFW_HTTP_HDR_USER_AGENT, REQ);
+
+	// Raw headers
+	TEST_RAW_RESP("Access-Control-Allow-Origin");
+	TEST_RAW_RESP("Accept-Ranges");
+	TEST_RAW_RESP("Authorization");
+	TEST_RAW_RESP("Allow");
+	TEST_RAW_RESP("Content-Disposition");
+	TEST_RAW_RESP("Content-Encoding");
+	TEST_RAW_RESP("Content-Language");
+	TEST_RAW_RESP("Content-Location");
+	TEST_RAW_RESP("Content-Range");
+	TEST_RAW_RESP("Link");
+	TEST_RAW_RESP("Location");
+	TEST_RAW_RESP("Proxy-Authenticate");
+	TEST_RAW_RESP("Retry-After");
+	TEST_RAW_RESP("Strict-Transport-Security");
+	TEST_RAW_RESP("Vary");
+	TEST_RAW_RESP("Via");
+	TEST_RAW_RESP("WWW-Authenticate");
+
+	// RGen_HdrOtherN headers
+	TEST_RAW_REQ(TOKEN_ALPHABET ":dummy");
+	TEST_RAW_RESP(TOKEN_ALPHABET ":dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\x09:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\":dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE(",:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("/:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("::dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE(";:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("<:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("=:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE(">:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("?:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("@:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("[:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\\:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("]:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("{:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("}:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\x7F:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\x80:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\x90:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\xC8:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\xAE:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\xFE:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\xFF:dummy");
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("\xFF:dummy");
+	// Very long header name
+	EXPECT_BLOCK_REQ_RESP_SIMPLE("Well-Prince-so-Genoa-and-Lucca-are-now-"
+	"just-family-estates-of-the-Buonapartes-But-I-warn-you-if-you-dont-"
+	"tell-me-that-this-means-war-if-you-still-try-to-defend-the-infamies-"
+	"and-horrors-perpetrated-by-that-Antichrist-I-really-believe-he-is-"
+	"Antichrist-I-will-have-nothing-more-to-do-with-you-and-you-are-no-"
+	"longer-my-friend-no-longer-my-faithful-slave-as-you-call-yourself!-"
+	"But-how-do-you-do-I-see-I-have-frightened-you-sit-down-and-tell-me-"
+	"all-the-news#It-was-in-July-1805-and-the-speaker-was-the-well-known-"
+	"Anna-Pavlovna-Scherer-maid-of-honor-and-favorite-of-the-Empress-"
+	"Marya-Fedorovna-With-these-words-she-greeted-Prince-Vasili-Kuagin-a-"
+	"man-of-high-rank-and-importance-who-was-the-first-to-arrive-at-her-"
+	"reception-Anna-Pavlovna-had-had-a-cough-for-some-days-She-was-as-she-"
+	"said-suffering-from-la-grippe-grippe-being-then-a-new-word-in-St-"
+	"Petersburg-used-only-by-the-elite#All-her-invitations-without-"
+	"exception-written-in-French-and-delivered-by-a-scarlet-liveried-"
+	"footman-that-morning-ran-as-follows#If-you-have-nothing-better-to-do"
+	"-Count-(or-Prince)-and-if-the-prospect-of-spending-an-evening-with-a"
+	"-poor-invalid-is-not-too-terrible-I-shall-be-very-charmed-to-see-you"
+	"-tonight-between-7-and-10-Annette-Scherer#Heavens!-what-a-virulent-"
+	"attack!-replied-the-prince-not-in-the-least-disconcerted-by-this-"
+	"reception-He-had-just-entered-wearing-an-embroidered-court-uniform-"
+	"knee-breeches-and-shoes-and-had-stars-on-his-breast-and-a-serene-"
+	"expression-on-his-flat-face-He-spoke-in-that-refined-French-in-which"
+	"-our-grandfathers-not-only-spoke-but-thought-and-with-the-gentle-"
+	"patronizing-intonation-natural-to-a-man-of-importance-who-had-grown-"
+	"old-in-society-and-at-court-He-went-up-to-Anna-Pavlovna-kissed-her-"
+	"hand-presenting-to-her-his-bald-scented-and-shining-head-and-"
+	"complacently-seated-himself-on-the-sofa#First-of-all-dear-friend-tell"
+	"-me-how-you-are-Set-your-friends-mind-at-rest-said-he-without-"
+	"altering-his-tone-beneath-the-politeness-and-affected-sympathy-of-"
+	"which-indifference-and-even-irony-could-be-discerned:dummy");
+
+#undef TEST_RAW_REQ
+#undef TEST_RAW_RESP
+#undef TEST_VCHAR_HEADER
+}
+
 TEST_SUITE(http_parser)
 {
 	int r;
@@ -3404,18 +3677,19 @@ TEST_SUITE(http_parser)
 	TEST_RUN(http_parser, hdr_token_confusion);
 	TEST_RUN(http_parser, fills_hdr_tbl_for_req);
 	TEST_RUN(http_parser, fills_hdr_tbl_for_resp);
-	TEST_RUN(http_parser, cache_control_flags);
+	TEST_RUN(http_parser, cache_control);
+	TEST_RUN(http_parser, age);
+	TEST_RUN(http_parser, pragma);
 	TEST_RUN(http_parser, suspicious_x_forwarded_for);
 	TEST_RUN(http_parser, parses_connection_value);
 	TEST_RUN(http_parser, content_length);
 	TEST_RUN(http_parser, eol_crlf);
-	TEST_RUN(http_parser, crlf_trailer);
 	TEST_RUN(http_parser, ows);
 	TEST_RUN(http_parser, folding);
 	TEST_RUN(http_parser, accept);
 	TEST_RUN(http_parser, host);
-	TEST_RUN(http_parser, chunked);
-	TEST_RUN(http_parser, chunk_size);
+	TEST_RUN(http_parser, transfer_encoding);
+	TEST_RUN(http_parser, crlf_trailer);
 	TEST_RUN(http_parser, cookie);
 	TEST_RUN(http_parser, set_cookie);
 	TEST_RUN(http_parser, etag);
@@ -3428,6 +3702,7 @@ TEST_SUITE(http_parser)
 	TEST_RUN(http_parser, xff);
 	TEST_RUN(http_parser, date);
 	TEST_RUN(http_parser, method_override);
+	TEST_RUN(http_parser, vchar);
 
 	/*
 	 * Testing for correctness of redirection mark parsing (in

@@ -537,18 +537,10 @@ __parse_ulong(unsigned char *__restrict data, size_t len,
 			return p - data;
 		if (unlikely(!isdigit(*p)))
 			return CSTR_NEQ;
-		if (unlikely(*acc > (limit - 10) / 10))
+		if (unlikely(__builtin_uaddl_overflow(*acc * 10, *p - '0', acc)
+			|| *acc > limit))
 			return CSTR_BADLEN;
-		*acc = *acc * 10 + *p - '0';
 	}
-
-#if !defined(CONFIG_KASAN)
-	/*
-	 * We are expecting the compiler to deduce this expression to
-	 * a constant, to avoid division at run time.
-	 */
-	BUILD_BUG_ON(!__builtin_constant_p((limit - 10) / 10));
-#endif
 
 	return CSTR_POSTPONE;
 }
@@ -8438,7 +8430,7 @@ __resp_parse_expires(TfwHttpMsg *msg, unsigned char *data, size_t len)
 
 	/*
 	 * A duplicate invalidates the header's value.
-	 * @resp->expires is set to zero - already expired.
+	 * @resp->cache_ctl.expires is set to zero - already expired.
 	 */
 	if (resp->cache_ctl.flags & TFW_HTTP_CC_HDR_EXPIRES)
 		parser->_i_st = __I_EoL;
@@ -8447,7 +8439,7 @@ __resp_parse_expires(TfwHttpMsg *msg, unsigned char *data, size_t len)
 	if (r < 0 && r != CSTR_POSTPONE) {
 		/*
 		 * On error just swallow the rest of the line.
-		 * @resp->expires is set to zero - already expired.
+		 * @resp->cache_ctl.expires is set to zero - already expired.
 		 */
 		parser->_date = 0;
 		parser->_acc = 0;
@@ -8474,10 +8466,7 @@ __resp_parse_date(TfwHttpMsg *msg, unsigned char *data, size_t len)
 		r = __parse_http_date(msg, data, len);
 
 	if (r < 0 && r != CSTR_POSTPONE) {
-		/*
-		 * On error just swallow the rest of the line.
-		 * @resp->expires is set to zero - already expired.
-		 */
+		/* On error just swallow the rest of the line. */
 		parser->_date = 0;
 		parser->_acc = 0;
 		parser->_i_st = __I_EoL;
@@ -8503,10 +8492,7 @@ __resp_parse_if_modified(TfwHttpMsg *msg, unsigned char *data, size_t len)
 		r = __parse_http_date(msg, data, len);
 
 	if (r < 0 && r != CSTR_POSTPONE) {
-		/*
-		 * On error just swallow the rest of the line.
-		 * @resp->expires is set to zero - already expired.
-		 */
+		/* On error just swallow the rest of the line. */
 		parser->_date = 0;
 		parser->_acc = 0;
 		parser->_i_st = __I_EoL;
