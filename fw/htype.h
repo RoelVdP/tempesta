@@ -67,6 +67,8 @@ extern const unsigned char __tfw_lct[256];
  */
 #define IS_TOKEN(c)	(token_a[c])
 
+#define IS_DIGIT(c)	('0' <= c && c <= '9')
+
 /**
  * Much faster implementation than standard tolower().
  * Also it's safer than ((c) | 0x20) which for example can convert '\r' to '-'.
